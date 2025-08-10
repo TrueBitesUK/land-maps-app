@@ -11,3 +11,8 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+.leaflet-control-container .leaflet-top.leaflet-left {
+  margin-top: 120px; /* below your Paper at top:70 + padding */
+  margin-left: 80px;
+}

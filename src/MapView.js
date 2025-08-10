@@ -5,6 +5,12 @@ import { Card, CardContent, Typography } from '@mui/material';
 import SearchBox from './components/searchBox';
 import { MapToolsLeft, MapToolsRight } from './components/MapTools';
 import 'leaflet/dist/leaflet.css';
+import 'leaflet-defaulticon-compatibility';
+import 'leaflet-defaulticon-compatibility/dist/leaflet-defaulticon-compatibility.css';
+
+import '@geoman-io/leaflet-geoman-free';
+import '@geoman-io/leaflet-geoman-free/dist/leaflet-geoman.css';
+
 
 // Recenter helper (unchanged)
 function RecenterOn({ location, zoom = 14 }) {
@@ -18,9 +24,86 @@ function RecenterOn({ location, zoom = 14 }) {
   return null;
 }
 
+function GeomanControls({ enabled, onAnyChange }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!map) return;
+    // toggle controls
+    if (enabled) {
+      map.pm.addControls({
+        position: 'topleft',
+        drawMarker: true,
+        drawPolygon: true,
+        drawPolyline: true,
+        drawRectangle: true,
+        drawCircle: false,
+        drawCircleMarker: false,
+        editMode: true,
+        dragMode: true,
+        removalMode: true,
+      });
+    } else {
+      map.pm.removeControls();
+    }
+
+    const handleChange = () => {
+      if (!onAnyChange) return;
+      const features = [];
+      map.eachLayer((l) => {
+        if (l?.pm && typeof l.toGeoJSON === 'function') {
+          const gj = l.toGeoJSON();
+          if (gj?.type === 'FeatureCollection') features.push(...gj.features);
+          else if (gj) features.push(gj);
+        }
+      });
+      onAnyChange({ type: 'FeatureCollection', features });
+    };
+
+    map.on('pm:create', handleChange);
+    map.on('pm:remove', handleChange);
+    map.on('pm:edit', handleChange);
+    return () => {
+      map.off('pm:create', handleChange);
+      map.off('pm:remove', handleChange);
+      map.off('pm:edit', handleChange);
+      map.pm.removeControls();
+    };
+  }, [map, enabled, onAnyChange]);
+  return null;
+}
+
+function ClearGeoman({ trigger }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!map || !trigger) return;
+
+    // Remove any Geoman-drawn layers
+    map.eachLayer((l) => {
+      // Geoman adds `pm` to editable layers; also check for toGeoJSON so we don't nuke tile layers
+      if (l?.pm && typeof l.toGeoJSON === 'function') {
+        try { map.removeLayer(l); } catch (_) {}
+      }
+    });
+
+    // Hide Geoman controls too (we also turn off drawEnabled in state above)
+    if (map.pm) {
+      try { map.pm.removeControls(); } catch (_) {}
+    }
+  }, [map, trigger]);
+
+  return null;
+}
+
 export default function MapView({ isLoggedIn, showAltLayer, setShowAltLayer }) {
   const [showSearch, setShowSearch] = useState(false);
   const [userLocation, setUserLocation] = useState(null);
+  const [drawEnabled, setDrawEnabled] = useState(false);
+  const [drawnGeoJSON, setDrawnGeoJSON] = useState(null);
+  const [clearTick, setClearTick] = useState(0);
+
+  const STADIA = (path) =>
+  `https://tiles.stadiamaps.com/tiles/${path}/{z}/{x}/{y}{r}.png?api_key=${process.env.REACT_APP_STADIA_API_KEY}`;
 
   // ⚙️ Layer configs (add as many as you like)
   const baseLayers = useMemo(() => ([
@@ -42,7 +125,7 @@ export default function MapView({ isLoggedIn, showAltLayer, setShowAltLayer }) {
       id: 'toner-lite',
       name: 'Toner Lite (Stadia/Stamen)',
       type: 'tile',
-      url: 'https://tiles.stadiamaps.com/tiles/stamen_toner_lite/{z}/{x}/{y}{r}.png',
+      url: STADIA('stamen_toner_lite'),
       attribution:
         '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
     },
@@ -50,7 +133,7 @@ export default function MapView({ isLoggedIn, showAltLayer, setShowAltLayer }) {
       id: 'toner',
       name: 'Toner (Stadia/Stamen)',
       type: 'tile',
-      url: 'https://tiles.stadiamaps.com/tiles/stamen_toner/{z}/{x}/{y}{r}.png',
+      url: STADIA('stamen_toner'),
       attribution:
         '© <a href="https://stadiamaps.com/">Stadia Maps</a> © <a href="https://stamen.com/">Stamen</a> © <a href="https://openmaptiles.org/">OpenMapTiles</a> © <a href="https://www.openstreetmap.org/copyright">OSM</a>',
     },
@@ -76,7 +159,7 @@ export default function MapView({ isLoggedIn, showAltLayer, setShowAltLayer }) {
       id: 'terrain-lines-stadia',
       name: 'Terrain Lines (Stadia/Stamen)',
       kind: 'tile',
-      url: 'https://tiles.stadiamaps.com/tiles/stamen_terrain_lines/{z}/{x}/{y}{r}.png',
+      url: STADIA('stamen_terrain_lines'),
       attribution: '© Stadia Maps © Stamen',
       zIndex: 460, opacity: 0.6,
     },
@@ -120,7 +203,8 @@ export default function MapView({ isLoggedIn, showAltLayer, setShowAltLayer }) {
               setOverlaysState={setOverlaysState}
               baseLayers={baseLayers}
               overlayLayers={overlayLayers}
-              onDrawClick={() => {}}
+              onDrawClick={() => setDrawEnabled(v => !v)}
+              drawEnabled={drawEnabled}
             />
             {/* Right tools can stay as you had them, or import MapToolsRight: */}
             <MapToolsRight
@@ -129,8 +213,14 @@ export default function MapView({ isLoggedIn, showAltLayer, setShowAltLayer }) {
               setShowSearch={setShowSearch}
               onCenterMap={handleCenterMap}
               onClear={() => {
-                // placeholder: clear overlays/tools here
+                // reset React state
                 setOverlaysState({});
+                setDrawnGeoJSON(null);
+                setUserLocation(null);
+                setShowSearch(false);
+                setDrawEnabled(false);
+                // tell the map to clear drawn layers
+                setClearTick(t => t + 1);
               }}
               onProfileClick={() => {
                 // placeholder: open profile dialog here
@@ -146,7 +236,11 @@ export default function MapView({ isLoggedIn, showAltLayer, setShowAltLayer }) {
           zoomControl={false}
         >
           <RecenterOn location={userLocation} />
-
+          <ClearGeoman trigger={clearTick} />
+          <GeomanControls
+            enabled={drawEnabled}
+            onAnyChange={(geojson) => setDrawnGeoJSON(geojson)}
+          />
           {showSearch && <SearchBox />}
 
           {/* User location marker */}

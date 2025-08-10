@@ -30,9 +30,18 @@ export function MapToolsLeft({
   baseLayers,              // config arrays
   overlayLayers,
   onDrawClick,
+  drawEnabled,
 }) {
   const [layersMenuAnchor, setLayersMenuAnchor] = useState(null);
   const layersMenuOpen = Boolean(layersMenuAnchor);
+
+  const toggleLayersMenu = (event) => {
+    if (layersMenuOpen) {
+      setLayersMenuAnchor(null);
+    } else {
+      setLayersMenuAnchor(event.currentTarget);
+    }
+  };  
 
   return (
     <>
@@ -50,14 +59,17 @@ export function MapToolsLeft({
         }}
       >
         <Tooltip title="Layer Options" placement="right">
-          <IconButton onClick={(e) => setLayersMenuAnchor(e.currentTarget)}>
-            <LayersIcon />
+          <IconButton
+            onClick={toggleLayersMenu}
+            color={layersMenuOpen ? 'primary' : 'default'}
+          >
+            {layersMenuOpen ? <CloseIcon /> : <LayersIcon />}
           </IconButton>
         </Tooltip>
 
         <Tooltip title="Draw Tool" placement="right">
-          <IconButton onClick={onDrawClick}>
-            <DrawIcon />
+          <IconButton onClick={onDrawClick} color={drawEnabled ? 'primary' : 'default'}>
+            {drawEnabled ? <CloseIcon /> : <DrawIcon />}
           </IconButton>
         </Tooltip>
       </Paper>
